@@ -4,3 +4,4 @@ fast_rcnn_models*
 VOCdevkit*
 cache
 *.tar
+*.pyc
