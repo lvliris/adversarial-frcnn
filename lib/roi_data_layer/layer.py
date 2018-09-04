@@ -348,16 +348,19 @@ class ASDNPretrainLossLayer(caffe.Layer):
         assert len(top) == len(self._name_to_top_map)
 
     def forward(self, bottom, top):
-
+        # 网络输出的预测mask
         mask_pred = bottom[0].data
+        # 手动生成的，分别遮挡了不同部分的mask
         conv_feat_mask = bottom[1].data
+        # 用被遮挡的特征图产生的分类概率
         prop =  bottom[2].data
+        # 属于哪个类
         labels_pos = bottom[3].data
         rois_pos = bottom[4].data
         data = bottom[5].data 
 
-        N = bottom[0].shape[0]
-        N2 = bottom[1].shape[0]
+        N = bottom[0].shape[0]      # 1 * num_pos
+        N2 = bottom[1].shape[0]     # 16 * num_pos
 
         assert(bottom[3].shape[0] == N)
         assert(bottom[2].shape[0] == N2)
@@ -374,6 +377,7 @@ class ASDNPretrainLossLayer(caffe.Layer):
 
         mask_label = np.zeros((N, 1, pool_len, pool_len))
 
+        # 找出概率最小的输出对应的mask，即遮挡后对检测影响最大的mask
         for i in range(N):
             min_prop = 1e6
             min_id   = 0 
@@ -492,6 +496,7 @@ class ASDNPretrainLossLayer(caffe.Layer):
 
 
 class ASDNPretrainLabelLayer(caffe.Layer):
+    """将RIOs中label为前景的候选框弄出来"""
     def setup(self, bottom, top):
         """Setup the ASDNDataLayer."""
 
@@ -577,6 +582,7 @@ class ASDNPretrainLabelLayer(caffe.Layer):
 
 
 class ASDNPretrainDataLayer(caffe.Layer):
+    """产生rep_num * rep_num（3 * 3）个被遮挡了不同区域的特征图"""
     def setup(self, bottom, top):
         """Setup the ASDNDataLayer."""
 
@@ -997,15 +1003,261 @@ class ASDNDataLayer(caffe.Layer):
         """This layer does not propagate gradients."""
         pass
 
+
+class ASTNDataLayer(caffe.Layer):
+    def setup(self, bottom, top):
+        """Setup the ASTNDataLayer"""
+
+        # parse the layer parameter string, which must be valid YAML
+        layer_params = yaml.load(self.param_str_)
+
+        self._block_num = layer_params['block_num']
+        self._name_to_bottom_map = {
+            'trans_param': 0,
+            'pool5': 1
+        }
+
+        self._name_to_top_map = {
+            'trans_feat': 0
+        }
+
+        top[0].reshape(*(bottom[1].data.shape))
+
+        print 'ASTNDataLayer: name_to_top:', self._name_to_top_map
+
+
+    def generate_grid(self, target, channels, alpha):
+        """Rotate some channels by alpha"""
+
+        sina = np.sin(alpha)
+        cosa = np.cos(alpha)
+
+        trans_param = np.array([[cosa, sina],
+                                [-sina, cosa]])
+
+        batch_size = target.shape[0]
+        height = target.shape[2]
+        width = target.shape[3]
+
+        # create normalized 2D grid
+        x = np.linspace(-1.0, 1.0, width)
+        y = np.linspace(-1.0, 1.0, height)
+        x_t, y_t = np.meshgrid(x, y)
+
+        # flatten
+        x_t_flat = np.reshape(x_t, [-1])
+        y_t_flat = np.reshape(y_t, [-1])
+        trans_mat = np.stack((x_t_flat, y_t_flat), axis=0)
+
+        # generate the grid
+        xy_s = np.matmul(trans_param, trans_mat)
+        batch_grid = np.tile(xy_s, (batch_size, channels, 1, 1))
+
+        return batch_grid
+
+
+    def bilinear_sample(self, source, target, batch_grid):
+        batch_size = source.data.shape[0]
+        channels = source.data.shape[1]
+        height = source.data.shape[2]
+        width = source.data.shape[3]
+
+        x_max = np.array([width -1])
+        y_max = np.array([height -1])
+        xy_max = np.stack((x_max, y_max))
+
+        # rescale to [0, w-1/h-1]
+        scaled_grid = 0.5 * (batch_grid + 1.0) * xy_max
+        x = scaled_grid[:,:,0,:]
+        y = scaled_grid[:,:,1,:]
+
+        # grab 4 nearest corner points
+        x0 = np.floor(x).astype(np.int32)
+        x1 = np.floor(x + 1).astype(np.int32)
+        y0 = np.floor(y).astype(np.int32)
+        y1 = np.floor(y + 1).astype(np.int32)
+
+        # clip to range [0,h-1/w-1] to not violate image boudaries
+        x0 = np.clip(x0, 0, x_max)
+        x1 = np.clip(x1, 0, x_max)
+        y0 = np.clip(y0, 0, y_max)
+        y1 = np.clip(y1, 0, y_max)
+
+        # get the image pixle at corners
+        Ia = source.data[:,:,x0,y0]
+        Ib = source.data[:,:,x0,y1]
+        Ic = source.data[:,:,x1,y0]
+        Id = source.data[:,:,x1,y1]
+
+        # recast to float for delta calculation
+        x0 = x0.astype(np.float32)
+        x1 = x1.astype(np.float32)
+        y0 = y0.astype(np.float32)
+        y1 = y1.astype(np.float32)
+
+        # calculate delta
+        wa = (x1 - x) * (y1 - y)
+        wb = (x1 - x) * (y - y0)
+        wc = (x - x0) * (y1 - y)
+        wd = (x - x0) * (y - y0)
+
+        # add dimention for addition
+        wa = np.expand_dims(wa, axis=3)
+        wb = np.expand_dims(wb, axis=3)
+        wc = np.expand_dims(wc, axis=3)
+        wd = np.expand_dims(wd, axis=3)
+
+        target.data[...] = Ia*wa + Ib*wb + Ic*wc + Id*wd
+
+
+    def calcu_diff(self, feature, batch_grid):
+        batch_size = feature.data.shape[0]
+        channels = feature.data.shape[1]
+        height = feature.data.shape[2]
+        width = feature.data.shape[3]
+
+        x_max = np.array([width - 1])
+        y_max = np.array([height - 1])
+        xy_max = np.stack((x_max, y_max))
+
+        # rescale to [0, w-1/h-1]
+        scaled_grid = 0.5 * (batch_grid + 1.0) * xy_max
+        x = scaled_grid[:, :, 0, :]
+        y = scaled_grid[:, :, 1, :]
+
+        # grab 4 nearest corner points
+        x0 = np.floor(x).astype(np.int32)
+        x1 = np.floor(x + 1).astype(np.int32)
+        y0 = np.floor(y).astype(np.int32)
+        y1 = np.floor(y + 1).astype(np.int32)
+
+        # get the image pixle at corners
+        Ia = feature.data[:, :, x0, y0]
+        Ib = feature.data[:, :, x0, y1]
+        Ic = feature.data[:, :, x1, y0]
+        Id = feature.data[:, :, x1, y1]
+
+        # recast to float for delta calculation
+        x0 = x0.astype(np.float32)
+        x1 = x1.astype(np.float32)
+        y0 = y0.astype(np.float32)
+        y1 = y1.astype(np.float32)
+
+        dx = Ia * (y - y1) + Ib * (y0 - y) + Ic * (y1 - y) + Id * (y - y0)
+        dy = Ia * (x - x1) + Ib * (x1 - x) + Ic * (x0 - x) + Id * (x - x0)
+
+        return dx, dy
+
+
+    def forward(self, bottom, top):
+        trans_param = np.copy(bottom[0].data)
+        rois_feat = np.copy(bottom[1].data)
+        print 'trans_param shape', trans_param.shape
+
+        batch_size = rois_feat.shape[0]
+        channel_num = rois_feat.shape[1]
+        height = rois_feat.shape[2]
+        width = rois_feat.shape[3]
+
+        channels = range(channel_num)
+        channels.reshape([self._block_num, -1])
+
+        trans_grid = np.zeros(*(rois_feat.shape))
+        for b in range(batch_size):
+            for i in range(self._block_num):
+                trans_grid[b, channels[i], :, :] = self.generate_grid(bottom[1], len(channels[i], trans_param[b, i]))
+
+        top_ind = self._name_to_top_map['trans_feat']
+        top[top_ind].data.reshape(*(rois_feat.shape))
+        self.bilinear_sample(rois_feat, top[top_ind].data, trans_grid)
+
+        # calculate the diff
+        ones = np.ones(*(rois_feat.shape))
+        du = np.zeros(*(rois_feat.shape))
+        self.bilinear_sample(ones, du, trans_grid)
+
+        bottom_inx = self._name_to_bottom_map['pool5']
+        bottom[bottom_inx].data.diff[...] = du
+
+        dxs, dys = self.calcu_diff(rois_feat, trans_grid)
+        xt = top[top_ind].data[:, :, 0, :]
+        yt = top[top_ind].data[:, :, 1, :]
+        trans_param_tiled = np.zeors(batch_size, channel_num)
+        for b in range(batch_size):
+            for i in range(self._block_num):
+                trans_param_tiled[b,channels[i]] = trans_param[b,i]
+        trans_param_tiled = np.expand_dims(trans_param_tiled, axis=3)
+
+        sin_theta = np.sin(trans_param_tiled)
+        cos_theta = np.cos(trans_param_tiled)
+
+        dtheta = dxs * (-1 * xt * sin_theta + yt * cos_theta) + dys * (-1* xt * cos_theta - yt * sin_theta)
+        print 'dtheta shape', dtheta.shape
+        dtheta = np.mean(dtheta, axis=2)
+
+        dtheta_mean = np.zeros([batch_size, self._block_num])
+        for i in range(self._block_num):
+            dtheta_mean[:, i] = np.mean(dtheta[:, i], axis=1)
+
+        bottom_inx = self._name_to_bottom_map['trans_param']
+        bottom[bottom_inx].data.diff[...] = dtheta_mean
+
+
+    def backward(self, top, propagate_down, bottom):
+        bottom[0].diff[...] *= top[0].diff
+
+
     def reshape(self, bottom, top):
         """Reshaping happens during the call to forward."""
         pass
 
 
+class ASTNLossLayer(caffe.Layer):
+    """optimize the detector to classify foreground objects as the background class"""
+
+    def setup(self, bottom, top):
+        """Setup the ASTNDataLayer"""
+
+        # parse the layer parameter string, which must be valid YAML
+        layer_params = yaml.load(self.param_str_)
+
+        self._num_classes = layer_params['num_classes']
+
+        self._name_to_bottom_map = {
+            'cls_prob': 0,
+            'labels': 1
+        }
+
+        self._name_to_top_map = {
+            'labels': 0
+        }
+
+        top[0].reshape(1)
 
 
+    def forward(self, bottom, top):
+        prob_pre = bottom[0].data
+        labels = bottom[1].data
+
+        batch_size = prob_pre.shape[0]
+        loss = -np.log(1 - prob_pre[:, labels])
+        dloss = 1 / (1 - prob_pre[:, labels])
+        for i in range(batch_size):
+            if labels[i] == 0:
+                loss[i] = 0.0
+                dloss[i] = 0.0
+
+        top[0].data[...] = np.sum(loss) / batch_size
+        bottom[0].diff[...] = np.sum(dloss) / batch_size
 
 
+    def backward(self, top, propagate_down, bottom):
+        bottom[0].diff[...] *= top[0].diff
+
+
+    def reshape(self, bottom, top):
+        """Reshaping happens during the call to forward."""
+        pass
 
 
 class BlobFetcher(Process):
