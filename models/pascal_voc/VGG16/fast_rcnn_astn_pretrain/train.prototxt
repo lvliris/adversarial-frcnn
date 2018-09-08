@@ -382,12 +382,32 @@ layer {
   }
 }
 
+layer {
+  name: "astn_pretrain_selectlabels"
+  type: "Python"
+  bottom: "pool5"
+  bottom: "labels"
+  bottom: "rois"
+  top: "conv_feat_pos"
+  top: "labels_pos"
+  top: "rois_pos"
+
+  propagate_down: false
+  propagate_down: false
+  propagate_down: false
+
+  python_param {
+    module: "roi_data_layer.layer"
+    layer: "ASDNPretrainLabelLayer"
+  }
+}
+
 # astn branch, the first two layers initialized from ImageNet fc6, fc7
 
 layer {
   name: "fc6_astn"
   type: "InnerProduct"
-  bottom: "pool5"
+  bottom: "conv_feat_pos"
   top: "fc6_astn"
   param {
     name: "fc6_astn_w"
@@ -485,7 +505,7 @@ layer {
   name: "astn_data"
   type: "Python"
   bottom: "trans_param"
-  bottom: "pool5"
+  bottom: "conv_feat_pos"
   top: "trans_feat"
 
 
@@ -604,56 +624,13 @@ layer {
 }
 
 
-
-
-layer {
-  name: "bbox_pred"
-  type: "InnerProduct"
-  bottom: "fc7"
-  top: "bbox_pred"
-  param {
-    name: "bbox_pred_w"
-    lr_mult: 1
-    decay_mult: 1
-  }
-  param {
-    name: "bbox_pred_b"
-    lr_mult: 2
-    decay_mult: 0
-  }
-  inner_product_param {
-    num_output: 84
-    weight_filler {
-      type: "gaussian"
-      std: 0.001
-    }
-    bias_filler {
-      type: "constant"
-      value: 0
-    }
-  }
-}
 layer {
   name: "loss_cls"
   type: "SoftmaxWithLoss"
   bottom: "cls_score"
-  bottom: "labels"
+  bottom: "labels_pos"
   top: "loss_cls"
   propagate_down: true
-  propagate_down: false
-  loss_weight: 1
-}
-layer {
-  name: "loss_bbox"
-  type: "SmoothL1Loss"
-  bottom: "bbox_pred"
-  bottom: "bbox_targets"
-  bottom: "bbox_inside_weights"
-  bottom: "bbox_outside_weights"
-  top: "loss_bbox"
-  propagate_down: true
-  propagate_down: false
-  propagate_down: false
   propagate_down: false
   loss_weight: 1
 }
@@ -664,7 +641,7 @@ layer {
   name: "loss_astn_pretrain"
   type: "Python"
   bottom: "cls_prob"
-  bottom: "labels"
+  bottom: "labels_pos"
   top: "loss_astn"
   propagate_down: true
   propagate_down: false
@@ -676,7 +653,29 @@ layer {
   loss_weight: 0.0025
 }
 
+layer{
+  name:"silence1"
+  type:"Silence"
+  bottom:"rois_pos"
+}
 
+layer{
+  name:"silence1"
+  type:"Silence"
+  bottom:"bbox_targets"
+}
+
+layer{
+  name:"silence1"
+  type:"Silence"
+  bottom:"bbox_inside_weights"
+}
+
+layer{
+  name:"silence1"
+  type:"Silence"
+  bottom:"bbox_outside_weights"
+}
 
 
 

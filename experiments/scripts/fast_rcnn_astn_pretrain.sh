@@ -27,7 +27,7 @@ case $DATASET in
     TRAIN_IMDB="voc_2007_trainval"
     TEST_IMDB="voc_2007_test"
     PT_DIR="pascal_voc"
-    ITERS=40000
+    ITERS=25000
     ;;
   coco)
     echo "Support coming soon. Stay tuned!"
@@ -43,28 +43,31 @@ case $DATASET in
     ;;
 esac
 
-LOG="experiments/logs/fast_rcnn_adv.txt.`date +'%Y-%m-%d_%H-%M-%S'`"
+LOG="experiments/logs/fast_rcnn_astn_pretrain.txt.`date +'%Y-%m-%d_%H-%M-%S'`"
 exec &> >(tee -a "$LOG")
 echo Logging output to "$LOG"
 
+# /nfs.yoda/xiaolonw/faster_rcnn/ohem/output/default/voc_2007_trainval/vgg16_fast_rcnn_iter_30000.caffemodel
 
-#time ./tools/train_net.py --gpu ${GPU_ID} \
-#  --solver models/${PT_DIR}/${NET}/fast_rcnn_adv/solver.prototxt \
-#  --weights  output/fast_rcnn_adv/voc_2007_trainval/train_init.caffemodel \
-#  --imdb ${TRAIN_IMDB} \
-#  --iters ${ITERS} \
-#  --cfg experiments/cfgs/fast_rcnn_adv_128.yml \
-#  ${EXTRA_ARGS}
+time ./tools/train_net.py --gpu ${GPU_ID} \
+  --solver models/${PT_DIR}/${NET}/fast_rcnn_astn_pretrain/solver.prototxt \
+  --weights output/fast_rcnn_adv/voc_2007_trainval/fast_rcnn_std_iter_10000.caffemodel \
+  --imdb ${TRAIN_IMDB} \
+  --iters ${ITERS} \
+  --cfg experiments/cfgs/fast_rcnn_adv_pretrain.yml \
+  ${EXTRA_ARGS}
+
 
 set +x
 NET_FINAL=`grep -B 1 "done solving" ${LOG} | grep "Wrote snapshot" | awk '{print $4}'`
 set -x
 
+echo ${TEST_IMDB}
+
 time ./tools/test_net.py --gpu ${GPU_ID} \
-  --def models/${PT_DIR}/${NET}/fast_rcnn/test.prototxt \
-  --net output/fast_rcnn_adv/voc_2007_trainval/fast_rcnn_std_iter_10000.caffemodel \
+  --def models/${PT_DIR}/${NET}/fast_rcnn_std/test.prototxt \
+  --net ${NET_FINAL} \
   --imdb ${TEST_IMDB} \
   --cfg experiments/cfgs/fast_rcnn_adv_128.yml \
   --num_dets 2000 \
-  --det_thresh 0.00001 \
-  ${EXTRA_ARGS}
+  --det_thresh 0.00001

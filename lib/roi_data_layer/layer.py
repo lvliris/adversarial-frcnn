@@ -18,6 +18,7 @@ import os
 import os.path 
 
 import cv2
+import time
 
 from multiprocessing import Process, Queue
 
@@ -1174,6 +1175,7 @@ class ASTNDataLayer(caffe.Layer):
 
 
     def forward(self, bottom, top):
+    	# start = time.time()
         trans_param = np.copy(bottom[0].data)
         rois_feat = np.copy(bottom[1].data)
         # print 'trans_param shape', trans_param.shape
@@ -1239,6 +1241,8 @@ class ASTNDataLayer(caffe.Layer):
 
         bottom_inx = self._name_to_bottom_map['trans_param']
         bottom[bottom_inx].diff[...] = dtheta_mean
+	# end = time.time()
+	# print 'astn_data layer forward time: ', end - start
 
 
     def backward(self, top, propagate_down, bottom):
@@ -1295,8 +1299,11 @@ class ASTNLossLayer(caffe.Layer):
 
         batch_size = prob_pre.shape[0]
 	labels = labels.reshape(batch_size).astype(np.int32)
-        loss = -np.log(1 - prob_pre[range(batch_size), labels])
-        dloss = 1 / (1 - prob_pre[:, labels])
+	prob_pre_pos = prob_pre[range(batch_size), labels]
+	if prob_pre_pos[prob_pre_pos >= 1.0].any():
+	    prob_pre_pos[prob_pre_pos >= 1.0] = 1.0 - 1e-5
+        loss = -np.log(1 - prob_pre_pos)
+        dloss = 1 / (1 - prob_pre_pos)
         for i in range(batch_size):
             if labels[i] == 0:
                 loss[i] = 0.0
