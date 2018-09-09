@@ -616,6 +616,34 @@ layer {
 }
 
 layer {
+  name: "bbox_pred"
+  type: "InnerProduct"
+  bottom: "fc7"
+  top: "bbox_pred"
+  param {
+    name: "bbox_pred_w"
+    lr_mult: 1
+    decay_mult: 1
+  }
+  param {
+    name: "bbox_pred_b"
+    lr_mult: 2
+    decay_mult: 0
+  }
+  inner_product_param {
+    num_output: 84
+    weight_filler {
+      type: "gaussian"
+      std: 0.001
+    }
+    bias_filler {
+      type: "constant"
+      value: 0
+    }
+  }
+}
+
+layer {
   name: "cls_prob"
   type: "Softmax"
   bottom: "cls_score"
@@ -631,6 +659,21 @@ layer {
   bottom: "labels_pos"
   top: "loss_cls"
   propagate_down: true
+  propagate_down: false
+  loss_weight: 1
+}
+
+layer {
+  name: "loss_bbox"
+  type: "SmoothL1Loss"
+  bottom: "bbox_pred"
+  bottom: "bbox_targets"
+  bottom: "bbox_inside_weights"
+  bottom: "bbox_outside_weights"
+  top: "loss_bbox"
+  propagate_down: true
+  propagate_down: false
+  propagate_down: false
   propagate_down: false
   loss_weight: 1
 }
@@ -659,23 +702,6 @@ layer{
   bottom:"rois_pos"
 }
 
-layer{
-  name:"silence1"
-  type:"Silence"
-  bottom:"bbox_targets"
-}
-
-layer{
-  name:"silence1"
-  type:"Silence"
-  bottom:"bbox_inside_weights"
-}
-
-layer{
-  name:"silence1"
-  type:"Silence"
-  bottom:"bbox_outside_weights"
-}
 
 
 
