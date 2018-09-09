@@ -503,18 +503,29 @@ class ASDNPretrainLabelLayer(caffe.Layer):
         self._name_to_bottom_map = {
             'conv_feat': 0,
             'labels': 1,
-            'rois': 2}
+            'rois': 2,
+            'bbox_targets': 3,
+            'bbox_inside_weights': 4,
+            'bbox_outside_weights': 5
+        }
 
         # mask_thres 0 means block, 1 means maintain 
 
         self._name_to_top_map = {
             'conv_feat_pos': 0,
             'labels_pos': 1,
-            'rois_pos': 2}
+            'rois_pos': 2,
+            'bbox_targets_pos': 3,
+            'bbox_inside_weights_pos': 4,
+            'bbox_outside_weights_pos': 5
+        }
 
         top[0].reshape(*(bottom[0].data.shape))
         top[1].reshape(1)
         top[2].reshape(*(bottom[2].data.shape))
+        top[3].reshape(*(bottom[3].data.shape))
+        top[4].reshape(*(bottom[4].data.shape))
+        top[5].reshape(*(bottom[5].data.shape))
 
 
         print 'ASDNPretrainLabelLayer: name_to_top:', self._name_to_top_map
@@ -543,6 +554,9 @@ class ASDNPretrainLabelLayer(caffe.Layer):
         conv_feat_pos = np.zeros((count_pos, channels, pool_len, pool_len))
         labels_pos    = np.zeros(count_pos)
         rois_pos = np.zeros((count_pos, rois.shape[1]))
+        target_pos = np.zeros((count_pos, bottom[3].data.shape[1]))
+        inside_weights = np.zeros((count_pos, bottom[4].data.shape[1]))
+        outside_weights = np.zeros((count_pos, bottom[5].data.shape[1]))
 
         cnt = 0
 
@@ -551,6 +565,9 @@ class ASDNPretrainLabelLayer(caffe.Layer):
                 labels_pos[cnt] = labels[i]
                 conv_feat_pos[cnt] = np.copy(conv_feat[i])
                 rois_pos[cnt, :] = np.copy(rois[i, :])
+                target_pos[cnt, :] = np.copy(bottom[3].data[i, :])
+                inside_weights[cnt, :] = np.copy(bottom[4].data[i, :])
+                outside_weights[cnt, :] = np.copy(bottom[5].data[i, :])
                 cnt = cnt + 1
 
         top[0].reshape(*(conv_feat_pos.shape))
@@ -561,6 +578,15 @@ class ASDNPretrainLabelLayer(caffe.Layer):
 
         top[2].reshape(*(rois_pos.shape))
         top[2].data[...] = rois_pos.astype(np.float32, copy=False)
+
+        top[3].reshape(*(target_pos.shape))
+        top[3].data[...] = target_pos.astype(np.float32, copy=False)
+
+        top[4].reshape(*(inside_weights.shape))
+        top[4].data[...] = inside_weights.astype(np.float32, copy=False)
+
+        top[5].reshape(*(outside_weights.shape))
+        top[5].data[...] = outside_weights.astype(np.float32, copy=False)
 
 
         

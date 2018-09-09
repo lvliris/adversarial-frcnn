@@ -388,9 +388,15 @@ layer {
   bottom: "pool5"
   bottom: "labels"
   bottom: "rois"
+  bottom: "bbox_targets"
+  bottom: "bbox_inside_weights"
+  bottom: "bbox_outside_weights"
   top: "conv_feat_pos"
   top: "labels_pos"
   top: "rois_pos"
+  top: "bbox_targets_pos"
+  top: "bbox_inside_weights_pos"
+  top: "bbox_outside_weights_pos"
 
   propagate_down: false
   propagate_down: false
@@ -667,9 +673,9 @@ layer {
   name: "loss_bbox"
   type: "SmoothL1Loss"
   bottom: "bbox_pred"
-  bottom: "bbox_targets"
-  bottom: "bbox_inside_weights"
-  bottom: "bbox_outside_weights"
+  bottom: "bbox_targets_pos"
+  bottom: "bbox_inside_weights_pos"
+  bottom: "bbox_outside_weights_pos"
   top: "loss_bbox"
   propagate_down: true
   propagate_down: false
